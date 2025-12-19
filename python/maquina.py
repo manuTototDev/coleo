@@ -4,6 +4,11 @@ import random
 import time
 import threading
 
+import numpy as np
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+
+from init import AutoInitAgent, AutoInitDashboard
+
 # --- CONFIGURACIÓN Y CONSTANTES ---
 
 # Valores de los símbolos de apuesta (según el panel inferior de la imagen)
@@ -59,7 +64,7 @@ class LogicaMaquina:
     def determinar_resultado(self):
         total_bet = self.total_apostado()
         if total_bet == 0:
-            return None, 0, False
+            return None, 0, False, None
 
         # 1. Alimentar el Pozo: La máquina se queda una parte, el resto va al pozo para premios
         ganancia_casa = total_bet * (1 - self.retorno_objetivo)
@@ -124,28 +129,49 @@ class LogicaMaquina:
         if not es_respin:
              self.apuestas_actuales = {s: 0 for s in SIMBOLOS_APOSTABLES}
 
-        return resultado_indice, ganancia_total, es_respin
+        return resultado_indice, ganancia_total, es_respin, resultado_simbolo
 
 # --- INTERFAZ GRÁFICA (GUI) ---
 class PikachuSlotGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Pikachu Virtual Slot - Lógica Real")
-        self.root.geometry("600x750")
+        self.root.geometry("1200x780")
         self.root.configure(bg='#f0e68c') # Un color amarillento base
 
         self.logica = LogicaMaquina()
         self.girando = False
         self.velocidad_rapida = tk.BooleanVar(value=False)
+        self.auto_corriendo = False
+        self.agente = AutoInitAgent(simbolos=SIMBOLOS_APOSTABLES, apuesta_maxima=9)
+        self.dashboard = AutoInitDashboard(SIMBOLOS_APOSTABLES, apuesta_maxima=9)
+        self._apuesta_total_actual = 0
+        self._ultimo_simbolo = None
+        self._canvas_dashboard = None
+        self._auto_thread = None
         self.labels_tablero = [] # Almacenará los widgets del recorrido
 
         self.setup_gui()
         self.actualizar_info()
+        self._render_dashboard(np.zeros(len(SIMBOLOS_APOSTABLES)), self.agente.estado_memoria())
 
     def setup_gui(self):
+        # Contenedor principal: dashboard a la izquierda, máquina a la derecha
+        contenedor = tk.Frame(self.root, bg='#f0e68c')
+        contenedor.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        frame_dashboard = tk.Frame(contenedor, bg='#f0e68c')
+        frame_dashboard.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 10))
+
+        self._canvas_dashboard = FigureCanvasTkAgg(self.dashboard.fig, master=frame_dashboard)
+        self._canvas_dashboard.get_tk_widget().pack(fill=tk.BOTH, expand=True)
+
+        frame_maquina = tk.Frame(contenedor, bg='#f0e68c')
+        frame_maquina.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
         # 1. Marco Superior (El Tablero Giratorio)
-        frame_tablero = tk.Frame(self.root, bg='black', bd=5, relief=tk.RIDGE)
-        frame_tablero.pack(pady=20)
+        frame_tablero = tk.Frame(frame_maquina, bg='black', bd=5, relief=tk.RIDGE)
+        frame_tablero.pack(pady=10)
 
         # Mapeo de índices lineales a coordenadas de cuadrícula (Grid) para hacer un cuadrado hueco
         # Tamaño del grid: 8x8.
@@ -181,7 +207,7 @@ class PikachuSlotGUI:
         center_label.grid(row=1, column=1, rowspan=6, columnspan=6)
 
         # 2. Marco Medio (Información y Controles de Giro)
-        frame_info = tk.Frame(self.root, bg='#f0e68c')
+        frame_info = tk.Frame(frame_maquina, bg='#f0e68c')
         frame_info.pack(pady=5)
 
         self.lbl_creditos = tk.Label(frame_info, text="Créditos: 0", font=('Arial', 12), bg='#f0e68c')
@@ -195,12 +221,20 @@ class PikachuSlotGUI:
 
         chk_velocidad = tk.Checkbutton(frame_info, text="Velocidad Turbo", variable=self.velocidad_rapida, bg='#f0e68c')
         chk_velocidad.grid(row=0, column=3)
+
+        tk.Label(frame_info, text="Tiradas/seg", bg='#f0e68c').grid(row=0, column=4, padx=(10, 0))
+        self.slider_tiradas = tk.Scale(frame_info, from_=1, to=10, orient=tk.HORIZONTAL, bg='#f0e68c', highlightthickness=0)
+        self.slider_tiradas.set(2)
+        self.slider_tiradas.grid(row=0, column=5, padx=5)
+
+        self.btn_auto = tk.Button(frame_info, text="Auto INIT", bg='green', fg='white', command=self.toggle_auto)
+        self.btn_auto.grid(row=0, column=6, padx=10)
         
-        self.lbl_mensaje = tk.Label(self.root, text="¡Haz tus apuestas!", font=('Arial', 12, 'bold'), bg='#f0e68c', fg='blue')
+        self.lbl_mensaje = tk.Label(frame_maquina, text="¡Haz tus apuestas!", font=('Arial', 12, 'bold'), bg='#f0e68c', fg='blue')
         self.lbl_mensaje.pack(pady=5)
 
         # 3. Marco Inferior (Panel de Apuestas)
-        frame_apuestas = tk.Frame(self.root, bg='#8B4513', bd=5, relief=tk.SUNKEN) # Marrón tipo madera arcade
+        frame_apuestas = tk.Frame(frame_maquina, bg='#8B4513', bd=5, relief=tk.SUNKEN) # Marrón tipo madera arcade
         frame_apuestas.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=10)
 
         self.labels_apuesta_individual = {}
@@ -243,17 +277,19 @@ class PikachuSlotGUI:
                  self.lbl_mensaje.config(text="¡Debes apostar algo primero!", fg='red')
             return
         
+        self._apuesta_total_actual = self.logica.total_apostado()
         self.girando = True
         self.btn_girar.config(state=tk.DISABLED)
         self.lbl_mensaje.config(text="¡Girando!", fg='black')
         
         # Determinar el resultado ANTES de empezar a girar (como las máquinas reales)
-        indice_destino, ganancia, es_respin = self.logica.determinar_resultado()
+        indice_destino, ganancia, es_respin, simbolo = self.logica.determinar_resultado()
+        self._ultimo_simbolo = simbolo
         
-        hilo = threading.Thread(target=self.animar_giro, args=(indice_destino, ganancia, es_respin))
+        hilo = threading.Thread(target=self.animar_giro, args=(indice_destino, ganancia, es_respin, simbolo))
         hilo.start()
 
-    def animar_giro(self, destino_idx, ganancia, es_respin):
+    def animar_giro(self, destino_idx, ganancia, es_respin, simbolo):
         velocidad_base = 0.05 if self.velocidad_rapida.get() else 0.1
         vueltas_minimas = 2
         total_pasos = (len(RECORRIDO_TABLERO) * vueltas_minimas) + destino_idx
@@ -286,9 +322,9 @@ class PikachuSlotGUI:
         self.labels_tablero[destino_idx].config(bg='lime green', relief=tk.SUNKEN)
         
         # Actualizar interfaz en el hilo principal
-        self.root.after(0, lambda: self.finalizar_giro(ganancia, es_respin))
+        self.root.after(0, lambda: self.finalizar_giro(ganancia, es_respin, simbolo))
 
-    def finalizar_giro(self, ganancia, es_respin):
+    def finalizar_giro(self, ganancia, es_respin, simbolo):
         self.actualizar_info()
         self.girando = False
         self.btn_girar.config(state=tk.NORMAL)
@@ -309,8 +345,11 @@ class PikachuSlotGUI:
              time.sleep(1)
              # Lanzar giro automático (respin)
              self.girando = True # Bloquear manual
-             indice_destino, ganancia_re, es_respin_re = self.logica.determinar_resultado()
-             hilo_re = threading.Thread(target=self.animar_giro, args=(indice_destino, ganancia_re, es_respin_re))
+             indice_destino, ganancia_re, es_respin_re, simbolo_re = self.logica.determinar_resultado()
+             self._ultimo_simbolo = simbolo_re
+             hilo_re = threading.Thread(
+                 target=self.animar_giro, args=(indice_destino, ganancia_re, es_respin_re, simbolo_re)
+             )
              hilo_re.start()
              return # Salimos para no resetear el estado aún
         else:
@@ -318,7 +357,7 @@ class PikachuSlotGUI:
 
         # Apagar la luz final después de un momento
         time.sleep(0.5)
-        simbolo_final = RECORRIDO_TABLERO[self.logica.determinar_resultado()[0]] # Truco para obtener el color base rápido
+        simbolo_final = simbolo or RECORRIDO_TABLERO[0]
         bg_color = '#ddd'
         if simbolo_final == 'BAR': bg_color = 'red'
         elif simbolo_final == '77': bg_color = 'blue'
@@ -327,6 +366,61 @@ class PikachuSlotGUI:
         for lbl in self.labels_tablero:
              if lbl.cget('bg') == 'lime green':
                  lbl.config(bg=bg_color, relief=tk.RAISED)
+
+        self._retroalimentar_agente(simbolo_final, ganancia)
+
+    def _retroalimentar_agente(self, simbolo, ganancia):
+        recompensa_neta = ganancia - self._apuesta_total_actual
+        self.agente.registrar_resultado(simbolo.lower() if simbolo else "", recompensa_neta)
+        self._render_dashboard(np.array(list(self.logica.apuestas_actuales.values())), self.agente.estado_memoria())
+
+    def _render_dashboard(self, apuesta_ia, estado):
+        nivel_tanque = self.logica.pozo_maquina
+        self.dashboard.actualizar(apuesta_ia, estado, self.agente.saldo(), nivel_tanque, self._canvas_dashboard)
+
+    def aplicar_apuesta_agente(self):
+        apuesta_ia = self.agente.elegir_apuesta()
+        total_necesario = int(np.sum(apuesta_ia))
+        if total_necesario == 0 or self.logica.creditos < total_necesario:
+            return False
+
+        self.logica.apuestas_actuales = {s: 0 for s in SIMBOLOS_APOSTABLES}
+        for simbolo, cantidad in zip(SIMBOLOS_APOSTABLES, apuesta_ia):
+            for _ in range(int(cantidad)):
+                self.logica.apostar(simbolo)
+        self.actualizar_info()
+        return True
+
+    def toggle_auto(self):
+        if self.auto_corriendo:
+            self.auto_corriendo = False
+            self.btn_auto.config(text="Auto INIT", bg='green')
+            return
+
+        self.auto_corriendo = True
+        self.btn_auto.config(text="Detener Auto", bg='red')
+        self._auto_thread = threading.Thread(target=self._loop_auto)
+        self._auto_thread.daemon = True
+        self._auto_thread.start()
+
+    def _loop_auto(self):
+        while self.auto_corriendo:
+            if self.girando:
+                time.sleep(0.05)
+                continue
+
+            if not self.aplicar_apuesta_agente():
+                self.lbl_mensaje.config(text="Auto detenido: sin créditos", fg='red')
+                self.auto_corriendo = False
+                self.btn_auto.config(text="Auto INIT", bg='green')
+                break
+
+            self.iniciar_giro_thread()
+            while self.girando and self.auto_corriendo:
+                time.sleep(0.05)
+
+            delay = max(0.05, 1.0 / max(1, self.slider_tiradas.get()))
+            time.sleep(delay)
 
 
 # --- MAIN ---
