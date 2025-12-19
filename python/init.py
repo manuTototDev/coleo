@@ -5,8 +5,9 @@ import numpy as np
 import os
 import matplotlib.pyplot as plt
 import seaborn as sns
+from maquina import MaquinaPikachu 
 
-# --- 1. CONFIGURACIÓN DE LA MÁQUINA ---
+# --- 1. CONFIGURACIÓN ---
 TABLA_PREMIOS = {
     "manzana": 5, "sandia": 20, "estrella": 30, "77": 40,
     "bar": 100, "campana": 20, "kiwi": 15, "naranja": 10, "cereza": 2
@@ -16,6 +17,9 @@ N_FRUTAS = len(FRUTAS)
 VENTANA = 10
 APUESTA_MAXIMA = 9
 ARCHIVO_MODELO = "cerebro_pikachu_final.pth"
+
+# Simulador con reserva inicial para evitar el cero absoluto al arranque
+simulador = MaquinaPikachu(retencion=0.15)
 
 # --- 2. ARQUITECTURA LSTM ---
 class AgentePikachu(nn.Module):
@@ -41,86 +45,63 @@ if os.path.exists(ARCHIVO_MODELO):
     modelo.load_state_dict(checkpoint['model_state_dict'])
     optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
     historial_tiradas = checkpoint.get('historial', [])
-    print(f">>> Cerebro cargado: {len(historial_tiradas)} jugadas previas.")
+    print(f">>> Cerebro cargado: {len(historial_tiradas)} jugadas.")
 
-# --- 4. FUNCIÓN DE VISUALIZACIÓN DE RED (BOLITAS Y PALITOS) ---
+# --- 4. FUNCIONES DE VISUALIZACIÓN (ROJO Y GRIS) ---
 def dibujar_red_en_subtrama(ax, apuesta_ia):
     ax.clear()
-    ax.set_facecolor('#1a1a1a') # Fondo oscuro técnico
+    ax.set_facecolor('#1a1a1a')
     capas = [N_FRUTAS, 8, 8, N_FRUTAS] 
     x_pos = [0, 1, 2, 3]
-    
-    # Dibujar Conexiones (Palitos)
     for i in range(len(capas) - 1):
-        y_curr_space = np.linspace(0.1, 0.9, capas[i])
-        y_next_space = np.linspace(0.1, 0.9, capas[i+1])
-        for y_c in y_curr_space:
-            for y_n in y_next_space:
-                # Las conexiones hacia la salida se iluminan si hay apuesta
-                color_link = '#444444' # Gris por defecto
-                alpha_link = 0.1
-                if i == 2: # Conexión hacia salida
-                    color_link = 'red'
-                    alpha_link = 0.05
-                ax.plot([x_pos[i], x_pos[i+1]], [y_c, y_n], color=color_link, alpha=alpha_link, lw=0.5)
-
-    # Dibujar Neuronas (Bolitas)
-    for i, n_neuronas in enumerate(capas):
-        y_space = np.linspace(0.1, 0.9, n_neuronas)
+        y_curr = np.linspace(0.1, 0.9, capas[i])
+        y_next = np.linspace(0.1, 0.9, capas[i+1])
+        for yc in y_curr:
+            for yn in y_next:
+                color_l = 'red' if i == 2 else '#333333'
+                alpha_l = 0.05 if i == 2 else 0.05
+                ax.plot([x_pos[i], x_pos[i+1]], [yc, yn], color=color_l, alpha=alpha_l, lw=0.5)
+    for i, n in enumerate(capas):
+        y_space = np.linspace(0.1, 0.9, n)
         for j, y in enumerate(y_space):
-            color_node = '#777777' # Gris medio
-            if i == 3: # Capa de Salida
-                valor = apuesta_ia[j]
-                intensidad = valor / 9.0
-                color_node = (intensidad, 0.1, 0.1) # Gradiente de Rojo
-                if valor > 0: # Brillo de actividad
-                    ax.scatter(x_pos[i], y, s=200, color='red', alpha=intensidad*0.4, zorder=2)
-            
-            ax.scatter(x_pos[i], y, s=120, color=color_node, edgecolors='white', linewidth=0.5, zorder=5)
-    
-    ax.set_title("Flujo de Decisión Neuronal", color='red', fontsize=10, fontweight='bold')
+            color_n = '#555555'
+            if i == 3:
+                intensidad = apuesta_ia[j] / 9.0
+                color_n = (intensidad, 0.0, 0.0)
+                if apuesta_ia[j] > 0:
+                    ax.scatter(x_pos[i], y, s=150, color='red', alpha=intensidad*0.3, zorder=2)
+            ax.scatter(x_pos[i], y, s=100, color=color_n, edgecolors='white', lw=0.5, zorder=5)
     ax.axis('off')
 
-# --- 5. ACTUALIZACIÓN DEL DASHBOARD ---
-def actualizar_dashboard(apuesta_ia, estado_actual):
+def actualizar_dashboard(apuesta_ia, estado_actual, nivel_tanque):
     plt.clf()
     plt.gcf().set_facecolor('#f0f0f0')
-
-    # [1] Gráfico de Saldo (Rojo sobre Gris)
+    # Saldo
     ax1 = plt.subplot(2, 2, 1)
-    ax1.plot(saldo_historico, color='red', linewidth=2, label='Saldo Neto')
-    ax1.axhline(y=0, color='black', linestyle='--', alpha=0.5)
-    ax1.set_title("Rendimiento Acumulado", fontweight='bold')
-    ax1.set_facecolor('#e6e6e6')
-
-    # [2] Bolitas y Palitos
+    ax1.plot(saldo_historico, color='red', lw=1.2)
+    ax1.set_title(f"Saldo Neto | Tanque Máquina: {nivel_tanque}", fontsize=10, fontweight='bold')
+    ax1.set_facecolor('#e0e0e0')
+    # Red
     ax2 = plt.subplot(2, 2, 2)
     dibujar_red_en_subtrama(ax2, apuesta_ia)
-
-    # [3] Barras de Apuesta
+    # Apuestas
     ax3 = plt.subplot(2, 2, 3)
-    colores = [(x/9.0, 0.1, 0.1) for x in apuesta_ia] # Barras también en gradiente rojo
-    ax3.bar(FRUTAS, apuesta_ia, color=colores, edgecolor='black')
+    ax3.bar(FRUTAS, apuesta_ia, color='red', alpha=0.8)
     ax3.set_ylim(0, 10)
-    plt.xticks(rotation=45)
-    ax3.set_title("Apuestas Propuestas (0-9)", fontweight='bold')
-
-    # [4] Memoria LSTM (Gris)
+    plt.xticks(rotation=45, fontsize=8)
+    # Memoria
     ax4 = plt.subplot(2, 2, 4)
     if len(historial_tiradas) > 0:
         sns.heatmap(estado_actual, xticklabels=FRUTAS, cmap="Greys", cbar=False, ax=ax4)
-    ax4.set_title("Memoria Temporal (Input Histórico)", fontweight='bold')
-
     plt.tight_layout()
     plt.draw()
-    plt.pause(0.1)
+    plt.pause(0.01)
 
-# --- 6. BUCLE PRINCIPAL ---
+# --- 5. BUCLE AUTOMÁTICO CON EXPLORACIÓN ---
 plt.ion()
 fig = plt.figure(figsize=(15, 8))
 
 while True:
-    # Preparar datos de entrada
     if len(historial_tiradas) < VENTANA:
         estado = [np.zeros(N_FRUTAS) for _ in range(VENTANA)]
     else:
@@ -131,58 +112,52 @@ while True:
     # IA propone apuesta
     with torch.no_grad():
         pred = modelo(input_tensor).numpy()[0]
-        apuesta_ia = np.round(pred).astype(int)
+        
+        # --- MECANISMO DE EXPLORACIÓN (Anti-Miedo) ---
+        # 5% de probabilidad de apuesta aleatoria para rellenar tanque
+        if np.random.rand() < 0.05:
+            apuesta_ia = np.random.randint(0, 2, size=N_FRUTAS) 
+        else:
+            apuesta_ia = np.round(pred).astype(int)
     
     total_apostado = np.sum(apuesta_ia)
-    actualizar_dashboard(apuesta_ia, estado)
-
-    print("\n" + "—"*50)
-    print(">>> PROPUESTA DE LA IA (Modo Autónomo)")
-    hay_apuesta = False
-    for i, f in enumerate(FRUTAS):
-        if apuesta_ia[i] > 0:
-            print(f"    {f.upper()}: {apuesta_ia[i]} monedas")
-            hay_apuesta = True
-    if not hay_apuesta: print("    IA decide no apostar en este turno.")
     
-    print(f"\nInversión total: {total_apostado}")
-    input("Haz la apuesta física y presiona ENTER para continuar...")
+    # --- PROTECCIÓN ANTI-ESTANCAMIENTO ---
+    # Si la IA decide no jugar nada, forzamos 1 moneda a la cereza
+    # Esto asegura que la máquina siempre reciba algo y el tanque suba
+    if total_apostado == 0:
+        apuesta_ia[FRUTAS.index("cereza")] = 1
+        total_apostado = 1
 
-    # Reportar resultado
-    print("\n¿Qué fruta salió?")
-    for i, f in enumerate(FRUTAS):
-        print(f"{i}:{f[:3]}", end=" | ")
+    # Ejecutar en simulador
+    resultado_nombre, nivel_tanque = simulador.girar(total_apostado)
+    res_idx = FRUTAS.index(resultado_nombre)
     
-    try:
-        res_idx = int(input("\nID Resultado: "))
-        fruta_ganadora = FRUTAS[res_idx]
+    # Calcular Recompensa
+    ganancia_bruta = apuesta_ia[res_idx] * TABLA_PREMIOS[resultado_nombre]
+    recompensa_neta = ganancia_bruta - total_apostado
+    saldo_historico.append(saldo_historico[-1] + recompensa_neta)
+
+    # Entrenamiento
+    optimizer.zero_grad()
+    pred_train = modelo(input_tensor)
+    loss = -torch.mean(torch.log(pred_train + 1e-5) * recompensa_neta)
+    loss.backward()
+    optimizer.step()
+
+    # Historial
+    vec_res = np.zeros(N_FRUTAS)
+    vec_res[res_idx] = 1
+    historial_tiradas.append(vec_res)
+    
+    # Dashboard (cada 10 jugadas para mayor velocidad de entrenamiento)
+    if len(historial_tiradas) % 10 == 0:
+        actualizar_dashboard(apuesta_ia, estado, nivel_tanque)
         
-        # Calcular Recompensa
-        ganancia_bruta = apuesta_ia[res_idx] * TABLA_PREMIOS[fruta_ganadora]
-        recompensa_neta = ganancia_bruta - total_apostado
-        saldo_historico.append(saldo_historico[-1] + recompensa_neta)
-
-        # Entrenar Red
-        optimizer.zero_grad()
-        pred_train = modelo(input_tensor)
-        # Loss: Maximizamos recompensa mediante Policy Gradient
-        loss = -torch.mean(torch.log(pred_train + 1e-5) * recompensa_neta)
-        loss.backward()
-        optimizer.step()
-
-        # Guardar historial
-        vec_res = np.zeros(N_FRUTAS)
-        vec_res[res_idx] = 1
-        historial_tiradas.append(vec_res)
-        
-        # Persistencia
-        torch.save({
-            'model_state_dict': modelo.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
-            'historial': historial_tiradas
-        }, ARCHIVO_MODELO)
-
-        print(f"\n[!] RESULTADO: {fruta_ganadora.upper()} | Neto: {recompensa_neta}")
-
-    except Exception as e:
-        print(f"Error en entrada: {e}")
+        if len(historial_tiradas) % 100 == 0:
+            torch.save({
+                'model_state_dict': modelo.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
+                'historial': historial_tiradas
+            }, ARCHIVO_MODELO)
+            print(f"Jugada: {len(historial_tiradas)} | Saldo: {round(saldo_historico[-1], 2)} | Tanque: {nivel_tanque}")
