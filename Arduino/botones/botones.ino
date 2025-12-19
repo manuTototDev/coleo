@@ -43,7 +43,7 @@ void loop() {
   cereza.write(180);
   start.write(180);
   
-  delay(2000); // Espera 2 segundos en Posición A
+  delay(200); // Espera 2 segundos en Posición A
 
   // --- POSICIÓN B (Movimiento) ---
   // Grupo 0 a 30 se mueve a 30
@@ -60,5 +60,5 @@ void loop() {
   cereza.write(150);
   start.write(150);
 
-  delay(2000); // Espera 2 segundos en Posición B
+  delay(200); // Espera 2 segundos en Posición B
 }
